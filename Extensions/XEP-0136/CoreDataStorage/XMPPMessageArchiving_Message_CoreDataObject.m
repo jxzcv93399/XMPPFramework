@@ -1,4 +1,12 @@
 #import "XMPPMessageArchiving_Message_CoreDataObject.h"
+#import "XMPPMessageArchivingCoreDataStorage.h"
+#import "XMPPLogging.h"
+
+#if DEBUG
+static const int xmppLogLevel = XMPP_LOG_LEVEL_WARN; // | XMPP_LOG_FLAG_TRACE;
+#else
+static const int xmppLogLevel = XMPP_LOG_LEVEL_WARN;
+#endif
 
 
 @interface XMPPMessageArchiving_Message_CoreDataObject ()
@@ -152,6 +160,91 @@
 - (void)setIsComposing:(BOOL)flag
 {
 	self.composing = @(flag);
+}
+
++ (void)removeMessageAndUpdateContactMessage:(XMPPMessageArchiving_Message_CoreDataObject *)message inMangedObjectContext:(NSManagedObjectContext *)context{
+    [context deleteObject:message];
+    XMPPJID *jid = message.bareJid;
+    
+    NSFetchRequest *request = [[NSFetchRequest alloc]initWithEntityName:@"XMPPMessageArchiving_Message_CoreDataObject"];
+    NSPredicate *predicate = [NSPredicate predicateWithFormat:@"bareJidStr == %@ AND streamBareJidStr == %@",message.bareJidStr,message.streamBareJidStr];
+    NSSortDescriptor *sort = [NSSortDescriptor sortDescriptorWithKey:@"timestamp" ascending:NO];
+    
+    [request setPredicate:predicate];
+    [request setSortDescriptors:@[sort]];
+    [request setFetchLimit:1];
+    
+    NSArray *result = [context executeFetchRequest:request error:nil];
+
+    
+    XMPPMessageArchiving_Message_CoreDataObject *nextMessage = nil;
+    if ([result count] >= 1) {
+        nextMessage = [result objectAtIndex:0];
+    }
+    
+    XMPPMessageArchiving_Contact_CoreDataObject *contactMessage = [[XMPPMessageArchivingCoreDataStorage sharedInstance] contactWithBareJidStr:message.bareJidStr streamBareJidStr:message.streamBareJidStr managedObjectContext:context];
+    contactMessage.mostRecentMessageBody = nextMessage.message.body;
+    contactMessage.mostRecentMessageOutgoing = nextMessage.outgoing;
+    contactMessage.mostRecentMessageTimestamp = nextMessage.timestamp;
+    
+    NSError *error = nil;
+    [context save:&error];
+    if (error) {
+        XMPPLogError(@"%@: %@ - Unable to save!", THIS_FILE, THIS_METHOD);
+    }
+}
+
++ (void)removeMessagesAndUpdateContactMessage:(NSArray *)messages inMangedObjectContext:(NSManagedObjectContext *)context{
+    
+    NSString *streamJIDStr = ((XMPPMessageArchiving_Message_CoreDataObject *)[messages firstObject]).streamBareJidStr;
+    NSMutableDictionary *dicOfSameJidMessageArray = [NSMutableDictionary dictionary];
+    [messages enumerateObjectsUsingBlock:^(id  _Nonnull obj, NSUInteger idx, BOOL * _Nonnull stop) {
+        XMPPMessageArchiving_Message_CoreDataObject *message = (XMPPMessageArchiving_Message_CoreDataObject *)obj;
+        XMPPJID *bareJid = message.bareJid;
+        if (dicOfSameJidMessageArray.count<=0 || ![dicOfSameJidMessageArray.allKeys containsObject:bareJid]) {
+            [dicOfSameJidMessageArray setObject:[NSMutableArray arrayWithObject:message] forKey:bareJid];
+        }else{
+            NSMutableArray *messArr = [dicOfSameJidMessageArray objectForKey:bareJid];
+            [messArr addObject:message];
+        }
+        
+    }];//先将message数组转化为相同jid的数组组成的字典对象
+    
+    
+    [dicOfSameJidMessageArray enumerateKeysAndObjectsUsingBlock:^(id  _Nonnull key, id  _Nonnull obj, BOOL * _Nonnull stop) {
+        XMPPJID *jid = (XMPPJID *)key;
+        NSMutableArray *messageArr = (NSMutableArray *)obj;
+        for (XMPPMessageArchiving_Message_CoreDataObject *message in messageArr) {
+            [context deleteObject:message];
+        }
+        
+        NSFetchRequest *request = [[NSFetchRequest alloc]initWithEntityName:@"XMPPMessageArchiving_Message_CoreDataObject"];
+        NSPredicate *predicate = [NSPredicate predicateWithFormat:@"bareJidStr == %@ AND streamBareJidStr == %@",jid.bare,streamJIDStr];
+        NSSortDescriptor *sort = [NSSortDescriptor sortDescriptorWithKey:@"timestamp" ascending:NO];
+        
+        [request setPredicate:predicate];
+        [request setSortDescriptors:@[sort]];
+        [request setFetchLimit:1];
+        
+        NSArray *result = [context executeFetchRequest:request error:nil];
+        
+        XMPPMessageArchiving_Message_CoreDataObject *nextMessage = nil;
+        if ([result count] >= 1) {
+            nextMessage = [result objectAtIndex:0];
+        }
+        
+        XMPPMessageArchiving_Contact_CoreDataObject *contactMessage = [[XMPPMessageArchivingCoreDataStorage sharedInstance] contactWithBareJidStr:jid.bare streamBareJidStr:streamJIDStr managedObjectContext:context];
+        contactMessage.mostRecentMessageBody = nextMessage.message.body;
+        contactMessage.mostRecentMessageOutgoing = nextMessage.outgoing;
+        contactMessage.mostRecentMessageTimestamp = nextMessage.timestamp;
+    }];
+    
+
+    NSError *error = nil;
+    [context save:&error];
+    if (error) {
+        XMPPLogError(@"%@: %@ - Unable to save!", THIS_FILE, THIS_METHOD);
+    }
 }
 
 #pragma mark Hooks
