@@ -1,6 +1,8 @@
 #import <Foundation/Foundation.h>
 #import <CoreData/CoreData.h>
 #import "XMPP.h"
+#import "XMPPMessageArchiving_Contact_CoreDataObject.h"
+
 
 
 @interface XMPPMessageArchiving_Message_CoreDataObject : NSManagedObject
@@ -48,5 +50,9 @@
  * you can use this method as a hook to set your custom properties.
 **/
 - (void)didUpdateObject;
+
++ (void)removeMessageAndUpdateContactMessage:(XMPPMessageArchiving_Message_CoreDataObject *)message inMangedObjectContext:(NSManagedObjectContext *)context;
+
++ (void)removeMessagesAndUpdateContactMessage:(NSArray *)messages inMangedObjectContext:(NSManagedObjectContext *)context;
 
 @end
